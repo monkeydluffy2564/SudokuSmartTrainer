@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sudoku Smart Trainer (React Powered)</title>
+    <!-- โหลด Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- โหลด Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- โหลด React และ ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <!-- โหลด Babel สำหรับคอมไพล์ JSX ในเบราว์เซอร์ -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        .zoom-in { animation: zoomIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes zoomIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen flex flex-col items-center py-6 px-2 sm:px-4">
+    <div id="root" class="w-full relative"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef, useMemo } = React;
+
+        // --- ระบบ Icon สำหรับโหลด Lucide Icons ใน React ---
+        const Icon = ({ name, className, strokeWidth }) => {
+            const containerRef = useRef(null);
+            useEffect(() => {
+                if (containerRef.current && lucide.icons[name]) {
+                    containerRef.current.innerHTML = '';
+                    const iconNode = lucide.createElement(lucide.icons[name]);
+                    if (className) iconNode.setAttribute('class', className);
+                    if (strokeWidth) iconNode.setAttribute('stroke-width', strokeWidth);
+                    containerRef.current.appendChild(iconNode);
+                }
+            }, [name, className, strokeWidth]);
+            return <span ref={containerRef} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }} />;
+        };
+
+        const RefreshCw = (props) => <Icon name="RefreshCw" {...props} />;
+        const Eraser = (props) => <Icon name="Eraser" {...props} />;
+        const Lightbulb = (props) => <Icon name="Lightbulb" {...props} />;
+        const Edit3 = (props) => <Icon name="Edit3" {...props} />;
+        const CheckCircle2 = (props) => <Icon name="CheckCircle2" {...props} />;
+        const Timer = (props) => <Icon name="Timer" {...props} />;
+        const Trophy = (props) => <Icon name="Trophy" {...props} />;
+        const ArrowLeft = (props) => <Icon name="ArrowLeft" {...props} />;
+        const Shuffle = (props) => <Icon name="Shuffle" {...props} />;
+        const X = (props) => <Icon name="X" {...props} />;
+        const Puzzle = (props) => <Icon name="Puzzle" {...props} />;
+
+        // --- รูปแบบตารางจิ๊กซอว์ 6x6 (0-5 แทนหมายเลขกลุ่ม) ---
+        const JIGSAW_LAYOUTS = [
+          [[0, 0, 1, 1, 2, 2], [0, 0, 1, 1, 2, 2], [0, 3, 1, 4, 2, 5], [0, 3, 1, 4, 2, 5], [3, 3, 4, 4, 5, 5], [3, 3, 4, 4, 5, 5]],
+          [[0, 0, 0, 0, 1, 1], [2, 0, 0, 1, 1, 1], [2, 2, 3, 3, 1, 4], [2, 2, 3, 3, 4, 4], [2, 5, 5, 3, 3, 4], [5, 5, 5, 5, 4, 4]],
+          [[0, 0, 1, 1, 1, 2], [0, 0, 0, 1, 1, 2], [3, 0, 2, 2, 1, 2], [3, 3, 3, 2, 2, 4], [3, 5, 4, 4, 4, 4], [5, 5, 5, 5, 5, 4]],
+          [[0, 0, 0, 0, 0, 1], [2, 2, 2, 0, 1, 1], [2, 3, 2, 2, 1, 1], [3, 3, 4, 4, 1, 5], [3, 3, 4, 4, 5, 5], [3, 4, 4, 5, 5, 5]],
+          [[0, 0, 0, 0, 1, 1], [0, 2, 2, 2, 1, 1], [0, 3, 2, 2, 4, 1], [5, 3, 3, 2, 4, 1], [5, 5, 3, 4, 4, 4], [5, 5, 5, 3, 3, 4]]
+        ];
+
+        // --- รูปแบบตารางจิ๊กซอว์ 9x9 แบบยาก (Irregular / Tetris shapes) ---
+        const JIGSAW_LAYOUTS_9X9 = [
+          [
+            [0, 0, 0, 1, 1, 2, 2, 2, 2],
+            [0, 0, 0, 1, 1, 1, 2, 2, 2],
+            [0, 3, 3, 1, 1, 1, 2, 2, 4],
+            [0, 3, 3, 3, 1, 4, 4, 4, 4],
+            [0, 3, 3, 3, 4, 4, 5, 5, 5],
+            [6, 3, 6, 6, 4, 4, 5, 5, 5],
+            [6, 6, 6, 6, 7, 7, 5, 5, 5],
+            [6, 7, 7, 7, 7, 7, 8, 8, 8],
+            [6, 7, 7, 8, 8, 8, 8, 8, 8]
+          ],
+          [
+            [0, 0, 0, 0, 1, 1, 1, 2, 2],
+            [0, 0, 0, 0, 1, 1, 2, 2, 2],
+            [0, 3, 3, 3, 1, 1, 2, 2, 2],
+            [3, 3, 3, 1, 1, 4, 4, 2, 5],
+            [3, 3, 3, 4, 4, 4, 4, 5, 5],
+            [6, 6, 4, 4, 4, 7, 5, 5, 5],
+            [6, 6, 6, 8, 7, 7, 7, 5, 5],
+            [6, 6, 6, 8, 8, 7, 7, 7, 5],
+            [6, 8, 8, 8, 8, 8, 8, 7, 7]
+          ],
+          [
+            [0, 0, 0, 1, 1, 1, 2, 2, 2],
+            [0, 0, 0, 1, 1, 3, 3, 2, 2],
+            [0, 0, 0, 1, 1, 3, 3, 2, 2],
+            [4, 4, 1, 1, 3, 3, 3, 2, 2],
+            [4, 4, 4, 4, 3, 5, 5, 5, 5],
+            [6, 4, 4, 4, 3, 5, 5, 5, 8],
+            [6, 6, 6, 7, 7, 5, 5, 8, 8],
+            [6, 6, 7, 7, 7, 7, 8, 8, 8],
+            [6, 6, 6, 7, 7, 7, 8, 8, 8]
+          ]
+        ];
+
+        // --- Dynamic Config Based on Game Type ---
+        const getGridConfig = (type) => {
+          if (type.includes('9x9')) {
+            return { size: 9, boxR: 3, boxC: 3, nums: [1, 2, 3, 4, 5, 6, 7, 8, 9] };
+          }
+          return { size: 6, boxR: 2, boxC: 3, nums: [1, 2, 3, 4, 5, 6] };
+        };
+
+        // --- Sudoku Logic ---
+        const isValid = (grid, r, c, num, type, layout, config) => {
+          const { size, boxR, boxC } = config;
+          
+          for (let i = 0; i < size; i++) {
+            if (grid[r][i] === num) return false;
+            if (grid[i][c] === num) return false;
+          }
+          
+          const region = type.includes('jigsaw') ? layout[r][c] : Math.floor(r / boxR) * boxR + Math.floor(c / boxC);
+          for (let i = 0; i < size; i++) {
+            for (let j = 0; j < size; j++) {
+              const currentRegion = type.includes('jigsaw') ? layout[i][j] : Math.floor(i / boxR) * boxR + Math.floor(j / boxC);
+              if (currentRegion === region && grid[i][j] === num) return false;
+            }
+          }
+
+          if (type.includes('diagonal')) {
+            if (r === c) {
+              for (let i = 0; i < size; i++) if (grid[i][i] === num) return false;
+            }
+            if (r + c === size - 1) {
+              for (let i = 0; i < size; i++) if (grid[i][size - 1 - i] === num) return false;
+            }
+          }
+          return true;
+        };
+
+        const solveSudoku = (grid, type, layout, config, state = { iter: 0 }) => {
+          state.iter++;
+          if (state.iter > 50000) return false; 
+
+          const { size, nums } = config;
+          for (let r = 0; r < size; r++) {
+            for (let c = 0; c < size; c++) {
+              if (grid[r][c] === 0) {
+                const shuffledNums = [...nums].sort(() => Math.random() - 0.5);
+                for (let num of shuffledNums) {
+                  if (isValid(grid, r, c, num, type, layout, config)) {
+                    grid[r][c] = num;
+                    if (solveSudoku(grid, type, layout, config, state)) return true;
+                    grid[r][c] = 0;
+                  }
+                }
+                return false;
+              }
+            }
+          }
+          return true;
+        };
+
+        const generateGame = (difficulty, type, layout) => {
+          const config = getGridConfig(type);
+          const { size } = config;
+          let grid;
+          let solution;
+          let solved = false;
+
+          while (!solved) {
+            grid = Array(size).fill().map(() => Array(size).fill(0));
+            
+            if (!type.includes('jigsaw') && !type.includes('diagonal') && !type.includes('even_odd')) {
+                const firstRowNums = [...config.nums].sort(() => Math.random() - 0.5);
+                for (let c = 0; c < size; c++) {
+                    grid[0][c] = firstRowNums[c];
+                }
+            }
+
+            solved = solveSudoku(grid, type, layout, config, { iter: 0 });
+          }
+
+          solution = JSON.parse(JSON.stringify(grid));
+          const puzzle = JSON.parse(JSON.stringify(grid));
+          
+          const parityMask = Array(size).fill().map(() => Array(size).fill(null));
+          if (type.includes('even_odd')) {
+             for(let r=0; r<size; r++){
+                for(let c=0; c<size; c++){
+                   parityMask[r][c] = solution[r][c] % 2 === 0 ? 'even' : 'odd';
+                }
+             }
+          }
+
+          const diffMap = {
+            6: { 'beginner': 14, 'intermediate': 18, 'advanced': 22, 'expert': 25 },
+            9: { 'beginner': 42, 'intermediate': 49, 'advanced': 54, 'expert': 58 } 
+          };
+          let cellsToRemove = diffMap[size][difficulty] || diffMap[size]['beginner'];
+          
+          while (cellsToRemove > 0) {
+            let r = Math.floor(Math.random() * size);
+            let c = Math.floor(Math.random() * size);
+            if (puzzle[r][c] !== 0) {
+              puzzle[r][c] = 0;
+              cellsToRemove--;
+            }
+          }
+          return { puzzle, solution, parityMask };
+        };
+
+        const formatVal = (num, type) => {
+          if (num == null || num === 0) return ''; 
+          if (type.includes('alphabet') && !type.includes('thai')) return String.fromCharCode(64 + num); 
+          if (type.includes('thai_alphabet')) return ['ก', 'ข', 'ค', 'ง', 'จ', 'ฉ', 'ช', 'ซ', 'ฌ'][num - 1];
+          return num.toString(); 
+        };
+
+        // --- Main Component ---
+        function SudokuSmartTrainer() {
+          const [gameState, setGameState] = useState('menu'); 
+          const [difficulty, setDifficulty] = useState('beginner');
+          
+          const [menuGameType, setMenuGameType] = useState('classic');
+          const [gameType, setGameType] = useState('classic'); 
+          
+          const [jigsawLayoutIndex, setJigsawLayoutIndex] = useState(0); 
+          
+          const [initialBoard, setInitialBoard] = useState(() => Array(6).fill().map(() => Array(6).fill(0)));
+          const [board, setBoard] = useState(() => Array(6).fill().map(() => Array(6).fill(0)));
+          const [solution, setSolution] = useState(() => Array(6).fill().map(() => Array(6).fill(0)));
+          const [notes, setNotes] = useState(() => Array(6).fill().map(() => Array(6).fill([])));
+          const [parityMask, setParityMask] = useState(() => Array(6).fill().map(() => Array(6).fill(null)));
+          
+          const [selectedCell, setSelectedCell] = useState(null);
+          const [isNotesMode, setIsNotesMode] = useState(false);
+          
+          const [timeElapsed, setTimeElapsed] = useState(0);
+          const [mistakes, setMistakes] = useState(0);
+          const timerRef = useRef(null);
+          const [visualHint, setVisualHint] = useState(null);
+
+          const config = useMemo(() => getGridConfig(gameType), [gameType]);
+
+          const currentActiveLayout = useMemo(() => {
+            const layouts = config.size === 9 ? JIGSAW_LAYOUTS_9X9 : JIGSAW_LAYOUTS;
+            return layouts[jigsawLayoutIndex % layouts.length];
+          }, [config.size, jigsawLayoutIndex]);
+
+          const conflictData = useMemo(() => {
+            const cells = new Set();
+            const lines = [];
+            
+            if (board.length !== config.size) return { cells, lines };
+
+            for (let r = 0; r < config.size; r++) {
+              for (let c = 0; c < config.size; c++) {
+                const val = board[r][c];
+                if (val === 0) continue;
+
+                for (let c2 = c + 1; c2 < config.size; c2++) {
+                  if (board[r][c2] === val) {
+                    cells.add(`${r}-${c}`); cells.add(`${r}-${c2}`);
+                    lines.push({ r1: r, c1: c, r2: r, c2: c2 });
+                  }
+                }
+                
+                for (let r2 = r + 1; r2 < config.size; r2++) {
+                  if (board[r2][c] === val) {
+                    cells.add(`${r}-${c}`); cells.add(`${r2}-${c}`);
+                    lines.push({ r1: r, c1: c, r2: r2, c2: c });
+                  }
+                }
+
+                const region = gameType.includes('jigsaw') ? currentActiveLayout[r][c] : Math.floor(r / config.boxR) * config.boxR + Math.floor(c / config.boxC);
+                for (let i = 0; i < config.size; i++) {
+                  for (let j = 0; j < config.size; j++) {
+                    if (i > r || (i === r && j > c)) {
+                      const currentRegion = gameType.includes('jigsaw') ? currentActiveLayout[i][j] : Math.floor(i / config.boxR) * config.boxR + Math.floor(j / config.boxC);
+                      if (currentRegion === region && board[i][j] === val) {
+                        cells.add(`${r}-${c}`); cells.add(`${i}-${j}`);
+                        if (i !== r && j !== c) {
+                           lines.push({ r1: r, c1: c, r2: i, c2: j });
+                        }
+                      }
+                    }
+                  }
+                }
+
+                if (gameType.includes('diagonal')) {
+                  if (r === c) {
+                    for (let i = r + 1; i < config.size; i++) {
+                      if (board[i][i] === val) {
+                        cells.add(`${r}-${c}`); cells.add(`${i}-${i}`);
+                        lines.push({ r1: r, c1: c, r2: i, c2: i });
+                      }
+                    }
+                  }
+                  if (r + c === config.size - 1) {
+                    for (let i = r + 1; i < config.size; i++) {
+                      if (board[i][config.size - 1 - i] === val) {
+                        cells.add(`${r}-${c}`); cells.add(`${i}-${config.size - 1 - i}`);
+                        lines.push({ r1: r, c1: c, r2: i, c2: config.size - 1 - i });
+                      }
+                    }
+                  }
+                }
+
+                if (gameType.includes('even_odd') && parityMask[r] && parityMask[r][c]) {
+                   const expectedParity = parityMask[r][c];
+                   const valParity = val % 2 === 0 ? 'even' : 'odd';
+                   if (expectedParity !== valParity) {
+                       cells.add(`${r}-${c}`);
+                   }
+                }
+
+              }
+            }
+            return { cells, lines };
+          }, [board, gameType, currentActiveLayout, config.size, config.boxR, config.boxC, parityMask]);
+
+          const startNewGame = useCallback((diff = difficulty, type = menuGameType) => {
+            setTimeout(() => {
+                const newConfig = getGridConfig(type);
+                const layoutList = newConfig.size === 9 ? JIGSAW_LAYOUTS_9X9 : JIGSAW_LAYOUTS;
+                const newLayoutIdx = type.includes('jigsaw') ? Math.floor(Math.random() * layoutList.length) : 0;
+                const selectedLayout = layoutList[newLayoutIdx];
+                
+                const { puzzle, solution: sol, parityMask: pMask } = generateGame(diff, type, selectedLayout);
+                
+                setJigsawLayoutIndex(newLayoutIdx);
+                setInitialBoard(JSON.parse(JSON.stringify(puzzle)));
+                setBoard(JSON.parse(JSON.stringify(puzzle)));
+                setSolution(JSON.parse(JSON.stringify(sol)));
+                setParityMask(pMask || Array(newConfig.size).fill().map(() => Array(newConfig.size).fill(null)));
+                setNotes(Array(newConfig.size).fill().map(() => Array(newConfig.size).fill([])));
+                setSelectedCell(null);
+                setIsNotesMode(false);
+                setTimeElapsed(0);
+                setMistakes(0);
+                setVisualHint(null);
+                setDifficulty(diff);
+                setGameType(type);
+                setMenuGameType(type);
+                setGameState('playing');
+            }, 10);
+          }, [difficulty, menuGameType]);
+
+          useEffect(() => {
+            if (gameState === 'playing' && !visualHint) {
+              timerRef.current = setInterval(() => {
+                setTimeElapsed((prev) => prev + 1);
+              }, 1000);
+            } else {
+              clearInterval(timerRef.current);
+            }
+            return () => clearInterval(timerRef.current);
+          }, [gameState, visualHint]);
+
+          useEffect(() => {
+            if (gameState !== 'playing') return;
+            
+            let isComplete = true;
+            for (let r = 0; r < config.size; r++) {
+              for (let c = 0; c < config.size; c++) {
+                if (board[r] && board[r][c] === 0) isComplete = false;
+              }
+            }
+            
+            if (isComplete && conflictData.cells.size === 0) {
+              let isCorrect = true;
+              for(let r = 0; r < config.size; r++) {
+                 for(let c = 0; c < config.size; c++) {
+                    if(board[r] && board[r][c] !== solution[r][c]) isCorrect = false;
+                 }
+              }
+              if (isCorrect) {
+                setGameState('won');
+                setSelectedCell(null);
+                setVisualHint(null);
+              }
+            }
+          }, [board, solution, gameState, conflictData.cells.size, config.size]);
+
+          const formatTime = (seconds) => {
+            const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const s = (seconds % 60).toString().padStart(2, '0');
+            return `${m}:${s}`;
+          };
+
+          const clearRelatedNotes = useCallback((prevNotes, r, c, num) => {
+            const newNotes = prevNotes.map(row => row.map(cellNotes => [...cellNotes]));
+            
+            for (let i = 0; i < config.size; i++) {
+              if (newNotes[r][i]) newNotes[r][i] = newNotes[r][i].filter(n => n !== num);
+              if (newNotes[i][c]) newNotes[i][c] = newNotes[i][c].filter(n => n !== num);
+            }
+
+            const region = gameType.includes('jigsaw') ? currentActiveLayout[r][c] : Math.floor(r / config.boxR) * config.boxR + Math.floor(c / config.boxC);
+            for (let i = 0; i < config.size; i++) {
+              for (let j = 0; j < config.size; j++) {
+                const currentRegion = gameType.includes('jigsaw') ? currentActiveLayout[i][j] : Math.floor(i / config.boxR) * config.boxR + Math.floor(j / config.boxC);
+                if (currentRegion === region) {
+                  if (newNotes[i][j]) newNotes[i][j] = newNotes[i][j].filter(n => n !== num);
+                }
+              }
+            }
+
+            if (gameType.includes('diagonal')) {
+              if (r === c) {
+                for (let i = 0; i < config.size; i++) {
+                  if (newNotes[i][i]) newNotes[i][i] = newNotes[i][i].filter(n => n !== num);
+                }
+              }
+              if (r + c === config.size - 1) {
+                for (let i = 0; i < config.size; i++) {
+                  if (newNotes[i][config.size - 1 - i]) newNotes[i][config.size - 1 - i] = newNotes[i][config.size - 1 - i].filter(n => n !== num);
+                }
+              }
+            }
+            return newNotes;
+          }, [gameType, currentActiveLayout, config.size, config.boxR, config.boxC]);
+
+          const handleInput = useCallback((num, forceNoteMode = null) => {
+            if (gameState !== 'playing' || !selectedCell) return;
+            if (visualHint) setVisualHint(null);
+
+            const [r, c] = selectedCell;
+            if (initialBoard[r] && initialBoard[r][c] !== 0) return;
+
+            const currentNotesMode = forceNoteMode !== null ? forceNoteMode : isNotesMode;
+
+            if (num === 0) {
+              const newBoard = [...board];
+              newBoard[r] = [...newBoard[r]];
+              newBoard[r][c] = 0;
+              setBoard(newBoard);
+              const newNotes = [...notes];
+              newNotes[r] = [...newNotes[r]];
+              newNotes[r][c] = [];
+              setNotes(newNotes);
+            } else if (currentNotesMode) {
+              const newNotes = [...notes];
+              newNotes[r] = [...newNotes[r]];
+              const cellNotes = newNotes[r][c] || [];
+              if (cellNotes.includes(num)) {
+                newNotes[r][c] = cellNotes.filter(n => n !== num);
+              } else {
+                newNotes[r][c] = [...cellNotes, num].sort();
+              }
+              setNotes(newNotes);
+              if (board[r][c] !== 0) {
+                const newBoard = [...board];
+                newBoard[r] = [...newBoard[r]];
+                newBoard[r][c] = 0;
+                setBoard(newBoard);
+              }
+            } else {
+              if (num !== solution[r][c]) {
+                setMistakes(m => m + 1);
+              }
+              const newBoard = [...board];
+              newBoard[r] = [...newBoard[r]];
+              newBoard[r][c] = num;
+              setBoard(newBoard);
+              
+              let newNotes = clearRelatedNotes(notes, r, c, num);
+              newNotes[r][c] = [];
+              setNotes(newNotes);
+            }
+          }, [gameState, selectedCell, initialBoard, isNotesMode, board, notes, solution, visualHint, clearRelatedNotes]);
+
+          const applySmartHint = useCallback(() => {
+            if (gameState !== 'playing') return;
+
+            let foundHint = null;
+
+            for (let regionIndex = 0; regionIndex < config.size; regionIndex++) {
+              for (let num = 1; num <= config.size; num++) {
+                let hasNumInRegion = false;
+                const emptyCells = [];
+                const regionCells = [];
+
+                for (let r = 0; r < config.size; r++) {
+                  for (let c = 0; c < config.size; c++) {
+                    const currentRegion = gameType.includes('jigsaw') ? currentActiveLayout[r][c] : Math.floor(r / config.boxR) * config.boxR + Math.floor(c / config.boxC);
+                    if (currentRegion === regionIndex) {
+                      regionCells.push([r, c]);
+                      if (board[r][c] === num) hasNumInRegion = true;
+                      if (board[r][c] === 0) emptyCells.push([r, c]);
+                    }
+                  }
+                }
+
+                if (hasNumInRegion || emptyCells.length === 0) continue;
+
+                const possibleCells = [];
+                const eliminations = []; 
+
+                emptyCells.forEach(([r, c]) => {
+                  let eliminated = false;
+                  
+                  if (gameType.includes('even_odd') && parityMask[r] && parityMask[r][c]) {
+                     const expectedParity = parityMask[r][c];
+                     const numParity = num % 2 === 0 ? 'even' : 'odd';
+                     if (expectedParity !== numParity) {
+                         eliminated = true;
+                         eliminations.push({ source: [r, c], target: [r, c], type: 'parity' }); 
+                     }
+                  }
+
+                  for (let i = 0; i < config.size; i++) {
+                    if (!eliminated && board[r][i] === num && !regionCells.some(rc => rc[0] === r && rc[1] === i)) {
+                      eliminated = true;
+                      eliminations.push({ source: [r, i], target: [r, c], type: 'row' });
+                    }
+                    if (!eliminated && board[i][c] === num && !regionCells.some(rc => rc[0] === i && rc[1] === c)) {
+                      eliminated = true;
+                      eliminations.push({ source: [i, c], target: [r, c], type: 'col' });
+                    }
+                  }
+                  
+                  if (gameType.includes('diagonal') && !eliminated) {
+                    if (r === c) {
+                      for (let i = 0; i < config.size; i++) {
+                        if (board[i][i] === num && !regionCells.some(rc => rc[0] === i && rc[1] === i)) {
+                          eliminated = true;
+                          eliminations.push({ source: [i, i], target: [r, c], type: 'diag1' });
+                        }
+                      }
+                    }
+                    if (!eliminated && r + c === config.size - 1) {
+                      for (let i = 0; i < config.size; i++) {
+                        if (board[i][config.size - 1 - i] === num && !regionCells.some(rc => rc[0] === i && rc[1] === config.size - 1 - i)) {
+                          eliminated = true;
+                          eliminations.push({ source: [i, config.size - 1 - i], target: [r, c], type: 'diag2' });
+                        }
+                      }
+                    }
+                  }
+
+                  if (!eliminated) possibleCells.push([r, c]);
+                });
+
+                if (possibleCells.length === 1 && eliminations.length > 0) {
+                  foundHint = {
+                    targetCell: possibleCells[0],
+                    num: num,
+                    regionCells: regionCells, 
+                    eliminations: eliminations
+                  };
+                  break;
+                }
+              }
+              if (foundHint) break;
+            }
+
+            if (!foundHint) {
+              const emptyCells = [];
+              for (let r = 0; r < config.size; r++) {
+                for (let c = 0; c < config.size; c++) {
+                  if (board[r][c] === 0) emptyCells.push([r, c]);
+                }
+              }
+              if (emptyCells.length > 0) {
+                const [r, c] = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+                
+                const targetRegion = gameType.includes('jigsaw') ? currentActiveLayout[r][c] : Math.floor(r / config.boxR) * config.boxR + Math.floor(c / config.boxC);
+                const regionCells = [];
+                for (let i = 0; i < config.size; i++) {
+                  for (let j = 0; j < config.size; j++) {
+                    const curReg = gameType.includes('jigsaw') ? currentActiveLayout[i][j] : Math.floor(i / config.boxR) * config.boxR + Math.floor(j / config.boxC);
+                    if (curReg === targetRegion) regionCells.push([i, j]);
+                  }
+                }
+
+                foundHint = {
+                  targetCell: [r, c],
+                  num: solution[r][c],
+                  regionCells: regionCells,
+                  eliminations: []
+                };
+              }
+            }
+
+            if (foundHint) {
+              const { targetCell, num } = foundHint;
+              const newBoard = [...board];
+              newBoard[targetCell[0]] = [...newBoard[targetCell[0]]];
+              newBoard[targetCell[0]][targetCell[1]] = num;
+              setBoard(newBoard);
+              
+              let newNotes = clearRelatedNotes(notes, targetCell[0], targetCell[1], num);
+              newNotes[targetCell[0]][targetCell[1]] = [];
+              setNotes(newNotes);
+
+              setVisualHint(foundHint);
+              setSelectedCell(targetCell);
+            }
+          }, [gameState, board, solution, notes, gameType, currentActiveLayout, config, parityMask, clearRelatedNotes]);
+
+          const clearHint = () => {
+            if (visualHint) setVisualHint(null);
+          };
+
+          useEffect(() => {
+            const handleKeyDown = (e) => {
+              if (gameState !== 'playing') return;
+              if (visualHint) clearHint();
+
+              const key = e.key.toUpperCase();
+              const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
+              const numbers = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+              const thaiMap = { 'ก': 1, 'ข': 2, 'ค': 3, 'ง': 4, 'จ': 5, 'ฉ': 6, 'ช': 7, 'ซ': 8, 'ฌ': 9 };
+              
+              if (gameType.includes('alphabet') && !gameType.includes('thai') && letters.includes(key)) {
+                const val = key.charCodeAt(0) - 64;
+                if (val <= config.size) handleInput(val, e.shiftKey ? true : null);
+              } else if (gameType.includes('thai_alphabet')) {
+                if (thaiMap[e.key] && thaiMap[e.key] <= config.size) {
+                  handleInput(thaiMap[e.key], e.shiftKey ? true : null);
+                } else if (numbers.includes(key)) {
+                  const val = parseInt(key);
+                  if (val <= config.size) handleInput(val, e.shiftKey ? true : null);
+                }
+              } else if (!gameType.includes('alphabet') && numbers.includes(key)) {
+                const val = parseInt(key);
+                if (val <= config.size) handleInput(val, e.shiftKey ? true : null);
+              } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                handleInput(0);
+              } else if (e.key.toLowerCase() === 'n') {
+                setIsNotesMode(prev => !prev);
+              } else if (e.key.toLowerCase() === 'h') {
+                applySmartHint();
+              } else if (e.key.startsWith('Arrow') && selectedCell) {
+                e.preventDefault();
+                let [r, c] = selectedCell;
+                if (e.key === 'ArrowUp') r = Math.max(0, r - 1);
+                if (e.key === 'ArrowDown') r = Math.min(config.size - 1, r + 1);
+                if (e.key === 'ArrowLeft') c = Math.max(0, c - 1);
+                if (e.key === 'ArrowRight') c = Math.min(config.size - 1, c + 1);
+                setSelectedCell([r, c]);
+              }
+            };
+            window.addEventListener('keydown', handleKeyDown);
+            return () => window.removeEventListener('keydown', handleKeyDown);
+          }, [gameState, handleInput, isNotesMode, selectedCell, applySmartHint, visualHint, gameType, config.size]);
+
+          const getCellCenter = useCallback((r, c, size) => {
+            return {
+              x: `${(c + 0.5) * (100 / size)}%`,
+              y: `${(r + 0.5) * (100 / size)}%`
+            };
+          }, []);
+
+          const arrowPaths = [];
+          if (visualHint && visualHint.eliminations.length > 0) {
+            const grouped = {};
+            visualHint.eliminations.forEach(elim => {
+              if (elim.type === 'parity') return; 
+              
+              const key = `${elim.source[0]}-${elim.source[1]}-${elim.type}`;
+              if (!grouped[key]) {
+                grouped[key] = { source: elim.source, type: elim.type, targets: [] };
+              }
+              grouped[key].targets.push(elim.target);
+            });
+
+            Object.values(grouped).forEach(group => {
+              const sourceCoords = getCellCenter(group.source[0], group.source[1], config.size);
+              let maxTarget = group.targets[0];
+              group.targets.forEach(t => {
+                const distT = Math.pow(t[0] - group.source[0], 2) + Math.pow(t[1] - group.source[1], 2);
+                const distMax = Math.pow(maxTarget[0] - group.source[0], 2) + Math.pow(maxTarget[1] - group.source[1], 2);
+                if (distT > distMax) maxTarget = t;
+              });
+              const targetCoords = getCellCenter(maxTarget[0], maxTarget[1], config.size);
+              
+              arrowPaths.push({
+                x1: sourceCoords.x, y1: sourceCoords.y,
+                x2: targetCoords.x, y2: targetCoords.y
+              });
+            });
+          }
+
+          const errorLines = conflictData.lines.map((line, idx) => {
+            const start = getCellCenter(line.r1, line.c1, config.size);
+            const end = getCellCenter(line.r2, line.c2, config.size);
+            return { id: idx, x1: start.x, y1: start.y, x2: end.x, y2: end.y };
+          });
+
+          const getTitle = () => {
+            switch (gameType) {
+              case 'alphabet': return 'Alphabet Sudoku 6x6';
+              case 'thai_alphabet': return 'Thai Alphabet Sudoku 6x6';
+              case 'diagonal': return 'Diagonal Sudoku 6x6';
+              case 'jigsaw': return 'Jigsaw Sudoku 6x6';
+              case 'classic_9x9': return 'Classic Sudoku 9x9';
+              case 'alphabet_9x9': return 'Alphabet Sudoku 9x9';
+              case 'diagonal_9x9': return 'Diagonal Sudoku 9x9';
+              case 'jigsaw_9x9': return 'Jigsaw Sudoku 9x9';
+              case 'even_odd_9x9': return 'Even-Odd Sudoku 9x9';
+              default: return 'Classic Sudoku 6x6';
+            }
+          };
+
+          const isAlphaMode = gameType.includes('alphabet');
+
+          return (
+            <div className={`w-full bg-white rounded-2xl shadow-xl p-4 sm:p-8 border border-slate-100 relative ${config.size === 9 ? 'max-w-xl' : 'max-w-md'} mx-auto`} onClick={(e) => { e.stopPropagation(); clearHint(); }}>
+              
+              {/* Header */}
+              <div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4">
+                <div>
+                  <h1 className="text-lg sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
+                    <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-amber-500 shrink-0" />
+                    {getTitle()}
+                  </h1>
+                  <p className="text-xs sm:text-sm text-slate-500 mt-1">ฝึกวิธีสแกนตัวเลขและตัวอักษร</p>
+                </div>
+                {gameState === 'playing' && (
+                  <div className="text-right flex flex-col items-end">
+                    <div className="flex items-center justify-end gap-1 text-blue-600 font-mono text-lg sm:text-xl font-semibold">
+                      <Timer className="w-4 h-4 sm:w-5 sm:h-5" />
+                      {formatTime(timeElapsed)}
+                    </div>
+                    <div className="text-[10px] sm:text-xs font-medium text-slate-400 mt-1 bg-slate-100 px-2 py-0.5 rounded-full">
+                      {difficulty.toUpperCase()}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Start Menu */}
+              {gameState === 'menu' && (
+                <div className="py-2">
+                  <div className="mb-6">
+                    <h2 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                      <span className="bg-slate-200 text-slate-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">1</span>
+                      เลือกรูปแบบเกม
+                    </h2>
+                    
+                    <h3 className="text-[11px] font-bold text-slate-400 mb-2 mt-4 px-1 uppercase tracking-wide">กระดานขนาด 6x6</h3>
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                      <button onClick={() => setMenuGameType('classic')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'classic' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base">1-6</span> Classic
+                      </button>
+                      <button onClick={() => setMenuGameType('alphabet')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'alphabet' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base">A-F</span> Alphabet
+                      </button>
+                      <button onClick={() => setMenuGameType('thai_alphabet')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'thai_alphabet' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base font-sans">ก-ฉ</span> Thai
+                      </button>
+                      <button onClick={() => setMenuGameType('diagonal')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'diagonal' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base relative flex items-center justify-center"><X className="w-4 h-4 absolute text-slate-400 opacity-30" />1-6</span> Diagonal
+                      </button>
+                      <button onClick={() => setMenuGameType('jigsaw')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'jigsaw' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <Puzzle className="w-4 h-4" /> Jigsaw
+                      </button>
+                    </div>
+
+                    <h3 className="text-[11px] font-bold text-slate-400 mb-2 mt-5 px-1 uppercase tracking-wide">กระดานขนาด 9x9 (มาตรฐาน)</h3>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button onClick={() => setMenuGameType('classic_9x9')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'classic_9x9' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base">1-9</span> Classic
+                      </button>
+                      <button onClick={() => setMenuGameType('alphabet_9x9')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'alphabet_9x9' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base">A-I</span> Alphabet
+                      </button>
+                      <button onClick={() => setMenuGameType('diagonal_9x9')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'diagonal_9x9' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <span className="text-sm sm:text-base relative flex items-center justify-center"><X className="w-4 h-4 absolute text-slate-400 opacity-30" />1-9</span> Diagonal
+                      </button>
+                      <button onClick={() => setMenuGameType('jigsaw_9x9')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'jigsaw_9x9' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <Puzzle className="w-4 h-4" /> Jigsaw
+                      </button>
+                      <button onClick={() => setMenuGameType('even_odd_9x9')} className={`p-2 rounded-xl border-2 font-bold text-[10px] sm:text-xs transition-all shadow-sm flex flex-col items-center justify-center gap-1 min-h-[56px] ${menuGameType === 'even_odd_9x9' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                        <div className="flex gap-0.5 items-center"><div className="w-3 h-3 bg-slate-400 rounded-sm"></div><div className="w-3 h-3 border-2 border-slate-300 rounded-sm bg-white"></div></div> Even-Odd
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mb-2">
+                    <h2 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
+                      <span className="bg-slate-200 text-slate-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">2</span> เลือกระดับความยากแล้วเริ่มเลย
+                    </h2>
+                    <div className="grid gap-2 sm:gap-3">
+                      <button onClick={() => startNewGame('beginner', menuGameType)} className="bg-white hover:bg-slate-50 border-2 border-slate-200 hover:border-blue-400 text-left p-3 sm:p-4 rounded-xl transition-all text-sm sm:text-base font-bold text-slate-800 shadow-sm">ระดับเริ่มต้น (Beginner)</button>
+                      <button onClick={() => startNewGame('intermediate', menuGameType)} className="bg-white hover:bg-slate-50 border-2 border-slate-200 hover:border-blue-400 text-left p-3 sm:p-4 rounded-xl transition-all text-sm sm:text-base font-bold text-slate-800 shadow-sm">ระดับกลาง (Intermediate)</button>
+                      <button onClick={() => startNewGame('advanced', menuGameType)} className="bg-white hover:bg-slate-50 border-2 border-slate-200 hover:border-blue-400 text-left p-3 sm:p-4 rounded-xl transition-all text-sm sm:text-base font-bold text-slate-800 shadow-sm">ระดับสูง (Advanced)</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Game Area */}
+              {(gameState === 'playing' || gameState === 'won') && (
+                <div className="animate-in fade-in duration-300">
+                  <div className="flex justify-between items-center mb-4">
+                    <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); }} className="flex items-center gap-1 text-xs sm:text-sm text-slate-500 hover:text-blue-600 font-medium">
+                      <ArrowLeft className="w-4 h-4" /> กลับเมนู
+                    </button>
+                    <button onClick={() => startNewGame(difficulty, gameType)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs sm:text-sm font-bold rounded-lg border border-blue-200 shadow-sm">
+                      <Shuffle className="w-4 h-4" /> สุ่มโจทย์ใหม่
+                    </button>
+                  </div>
+
+                  {gameType.includes('even_odd') && (
+                    <div className="flex justify-center gap-4 mb-4 text-xs sm:text-sm font-bold text-slate-600 bg-slate-100 py-2 rounded-lg">
+                      <span className="flex items-center gap-1.5"><div className="w-4 h-4 bg-slate-300 rounded border border-slate-400"></div> เลขคู่ (2, 4, 6, 8)</span>
+                      <span className="flex items-center gap-1.5"><div className="w-4 h-4 bg-white rounded border border-slate-300"></div> เลขคี่ (1, 3, 5, 7, 9)</span>
+                    </div>
+                  )}
+
+                  <div className={`transition-all duration-300 overflow-hidden ${visualHint ? 'max-h-24 opacity-100 mb-4' : 'max-h-0 opacity-0 mb-0'}`}>
+                     <div className="bg-green-50 p-2 sm:p-3 rounded-xl border border-green-300 flex items-center justify-between shadow-sm">
+                        <div className="flex items-center gap-2 text-left">
+                           <Lightbulb className="w-5 h-5 text-green-600 shrink-0" />
+                           <div className="flex flex-col">
+                             <span className="text-[11px] sm:text-sm font-bold text-green-800 leading-tight">ช่องเดียวที่เติม {formatVal(visualHint?.num, gameType)} ได้</span>
+                           </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); clearHint(); }} className="ml-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-green-500 hover:bg-green-600 text-white text-[10px] sm:text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap active:scale-95">เล่นต่อ</button>
+                     </div>
+                  </div>
+
+                  <div className="flex justify-center mb-6">
+                    <div className="relative w-fit mx-auto">
+                      <svg className="absolute inset-0 w-full h-full pointer-events-none z-10">
+                        <defs>
+                          <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><polygon points="0 0, 6 3, 0 6" fill="#334155" /></marker>
+                        </defs>
+                        {visualHint && arrowPaths.map((path, idx) => (
+                          <line key={`hint-${idx}`} x1={path.x1} y1={path.y1} x2={path.x2} y2={path.y2} stroke="#334155" strokeWidth="2.5" markerEnd="url(#arrowhead)" className="opacity-80 drop-shadow-md" />
+                        ))}
+                        {!visualHint && errorLines.map(line => (
+                           <line key={`err-${line.id}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke="#dc2626" strokeWidth="3.5" strokeLinecap="round" className="opacity-90 drop-shadow-sm" />
+                        ))}
+                      </svg>
+
+                      <div className={`grid border-[3px] border-slate-800 bg-white select-none shadow-sm relative z-0 ${config.size === 9 ? 'grid-cols-9' : 'grid-cols-6'}`} onClick={clearHint}>
+                        {board.map((row, r) =>
+                          row.map((cell, c) => {
+                            const isSelected = selectedCell?.[0] === r && selectedCell?.[1] === c;
+                            const isInitial = initialBoard[r] && initialBoard[r][c] !== 0;
+
+                            let isRightBorderThick = false;
+                            let isBottomBorderThick = false;
+                            if (gameType.includes('jigsaw')) {
+                              isRightBorderThick = c !== config.size - 1 && currentActiveLayout[r][c] !== currentActiveLayout[r][c + 1];
+                              isBottomBorderThick = r !== config.size - 1 && currentActiveLayout[r][c] !== currentActiveLayout[r + 1][c];
+                            } else {
+                              isRightBorderThick = c % config.boxC === config.boxC - 1 && c !== config.size - 1;
+                              isBottomBorderThick = r % config.boxR === config.boxR - 1 && r !== config.size - 1;
+                            }
+
+                            const borderRight = isRightBorderThick ? 'border-r-[3px] border-r-slate-800' : (c !== config.size - 1 ? 'border-r border-r-slate-300' : '');
+                            const borderBottom = isBottomBorderThick ? 'border-b-[3px] border-b-slate-800' : (r !== config.size - 1 ? 'border-b border-b-slate-300' : '');
+
+                            const isError = conflictData.cells.has(`${r}-${c}`);
+                            const isHighlightedNum = !visualHint && !isSelected && !isError && cell !== 0 && selectedCell && board[selectedCell[0]] && board[selectedCell[0]][selectedCell[1]] === cell;
+                            const isDiagonalCell = gameType.includes('diagonal') && (r === c || r + c === config.size - 1);
+                            const isEvenCell = gameType.includes('even_odd') && parityMask[r] && parityMask[r][c] === 'even';
+
+                            let baseBg = isEvenCell ? 'bg-slate-300' : (isDiagonalCell ? 'bg-slate-100' : 'bg-transparent');
+                            let hintBg = baseBg;
+                            let hintBorder = '';
+                            let showRedX = false;
+                            let numStyle = isInitial ? 'text-slate-900 font-bold' : 'text-blue-600';
+                            let zIndexClass = 'z-0';
+
+                            if (visualHint) {
+                              const isTarget = visualHint.targetCell[0] === r && visualHint.targetCell[1] === c;
+                              const inBox = visualHint.regionCells.some(([rr, cc]) => rr === r && cc === c);
+                              const isEliminated = visualHint.eliminations.some(elim => elim.target[0] === r && elim.target[1] === c);
+                              const isSource = visualHint.eliminations.some(elim => elim.source[0] === r && elim.source[1] === c);
+
+                              if (isTarget) {
+                                hintBg = baseBg; 
+                                hintBorder = `after:absolute after:inset-[2px] sm:after:inset-1 after:rounded-full after:border-[3px] after:border-green-500 after:bg-green-100/50`;
+                                numStyle = 'text-green-700 font-black relative z-20';
+                              } else if (isSource) {
+                                hintBg = 'bg-amber-100';
+                                hintBorder = `after:absolute after:inset-[2px] sm:after:inset-[3px] after:rounded-full after:border-2 after:border-amber-400`;
+                                numStyle = 'text-amber-700 font-black relative z-20';
+                              } else {
+                                if (inBox) { hintBg = isEvenCell ? 'bg-slate-400' : 'bg-slate-200'; }
+                                if (isEliminated) { showRedX = true; }
+                              }
+                            } else if (isError) {
+                              hintBg = 'bg-[#fde047]'; 
+                              hintBorder = `after:absolute after:inset-[2px] sm:after:inset-[4px] after:rounded-full after:border-[2px] sm:after:border-[3px] after:border-red-600`;
+                              numStyle = 'text-black font-black relative z-20';
+                            } else if (isSelected) {
+                              hintBg = 'bg-blue-200'; 
+                              hintBorder = 'ring-[3px] ring-blue-500 ring-inset'; 
+                              zIndexClass = 'z-20';
+                            } else if (isHighlightedNum) {
+                              hintBg = 'bg-blue-50'; 
+                            }
+
+                            let cellClass = config.size === 9 ? 'w-[32px] h-[32px] sm:w-10 sm:h-10 lg:w-[46px] lg:h-[46px]' : 'w-12 h-12 sm:w-14 sm:h-14 lg:w-16 lg:h-16';
+                            let textClass = config.size === 9 ? 'text-lg sm:text-2xl' : 'text-2xl sm:text-3xl';
+                            let fontClass = gameType.includes('thai_alphabet') ? 'font-sans' : '';
+
+                            return (
+                              <div key={`${r}-${c}`} onClick={() => { if (gameState === 'playing') { if (visualHint) clearHint(); else setSelectedCell([r, c]); } }} className={` ${cellClass} flex items-center justify-center relative transition-colors box-border ${borderRight} ${borderBottom} ${hintBg} ${hintBorder} ${zIndexClass} ${!visualHint && !isSelected ? 'cursor-pointer hover:bg-slate-50' : ''}`}>
+                                {showRedX && <X className="absolute w-6 h-6 sm:w-8 sm:h-8 text-red-500/80 z-20" strokeWidth="2.5" />}
+                                {cell !== 0 && <span className={`${textClass} font-medium ${numStyle} ${fontClass}`}>{formatVal(cell, gameType)}</span>}
+                                {!visualHint && cell === 0 && notes[r] && notes[r][c] && notes[r][c].length > 0 && (
+                                  <div className={`absolute inset-1 grid p-0.5 z-20 ${config.size === 9 ? 'grid-cols-3 grid-rows-3' : 'grid-cols-3 grid-rows-2'}`}>
+                                    {config.nums.map(n => (
+                                      <div key={n} className="flex items-center justify-center">
+                                        {notes[r][c].includes(n) && <span className={`font-medium text-slate-500 ${fontClass} ${config.size === 9 ? 'text-[8px] sm:text-[10px]' : 'text-[10px] sm:text-xs'}`}>{formatVal(n, gameType)}</span>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {gameState === 'playing' && (
+                    <div className="space-y-4">
+                      <div className="flex justify-between gap-2 sm:gap-3">
+                        <button onClick={() => setIsNotesMode(!isNotesMode)} className={`flex-1 flex flex-col items-center justify-center py-2 sm:py-2.5 rounded-xl border-2 shadow-sm ${isNotesMode ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600'}`}>
+                          <Edit3 className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" /> <span className="text-[10px] sm:text-[11px] font-bold">ทด{isAlphaMode ? 'อักษร' : 'เลข'}</span>
+                        </button>
+                        <button onClick={() => handleInput(0)} className="flex-1 flex flex-col items-center justify-center py-2 sm:py-2.5 bg-white border-2 border-slate-200 text-slate-600 rounded-xl shadow-sm hover:bg-slate-50">
+                          <Eraser className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" /> <span className="text-[10px] sm:text-[11px] font-bold">ลบ</span>
+                        </button>
+                        <button onClick={applySmartHint} className="flex-1 flex flex-col items-center justify-center py-2 sm:py-2.5 bg-green-50 border-2 border-green-200 text-green-700 rounded-xl shadow-sm hover:bg-green-100">
+                          <Lightbulb className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" /> <span className="text-[10px] sm:text-[11px] font-bold text-center leading-tight">ใบ้พร้อม<br/>สอนคิด</span>
+                        </button>
+                      </div>
+
+                      <div className={`grid gap-1.5 sm:gap-2 ${config.size === 9 ? 'grid-cols-5 sm:grid-cols-9' : 'grid-cols-6'}`}>
+                        {config.nums.map((num) => (
+                          <button key={num} onClick={() => handleInput(num)} className={`h-10 sm:h-12 lg:h-14 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl shadow-sm border border-slate-200 active:scale-95 ${config.size === 9 ? 'text-lg sm:text-xl' : 'text-xl sm:text-2xl'} ${gameType.includes('thai_alphabet') ? 'font-sans' : ''}`}>
+                            {formatVal(num, gameType)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Win Screen */}
+              {gameState === 'won' && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 rounded-2xl animate-in fade-in zoom-in">
+                   <Trophy className="w-16 h-16 sm:w-20 sm:h-20 text-yellow-500 mb-4 drop-shadow-lg" />
+                   <h2 className="text-2xl sm:text-3xl font-black text-slate-800 mb-2">ยอดเยี่ยม!</h2>
+                   <p className="text-sm sm:text-base text-slate-600 font-medium mb-6 text-center">คุณแก้ปริศนานี้สำเร็จแล้ว</p>
+                   
+                   <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl w-full max-w-xs mb-8">
+                      <div className="flex justify-between items-center py-1">
+                         <span className="text-sm sm:text-base text-slate-500 font-bold">เวลาที่ใช้</span>
+                         <span className="text-blue-600 font-black text-lg">{formatTime(timeElapsed)}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-t border-slate-200 mt-2 pt-2">
+                         <span className="text-sm sm:text-base text-slate-500 font-bold">พิมพ์ผิด</span>
+                         <span className="text-red-500 font-black text-lg">{mistakes} <span className="text-sm text-slate-400">ครั้ง</span></span>
+                      </div>
+                   </div>
+
+                   <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); }} className="w-full max-w-xs py-3 sm:py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-base sm:text-lg font-bold transition-all shadow-md active:scale-95">
+                      กลับไปเลือกรูปแบบเกม
+                   </button>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        // --- Render App ---
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<SudokuSmartTrainer />);
+    </script>
+</body>
+</html>
