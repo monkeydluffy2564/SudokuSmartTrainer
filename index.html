@@ -51,6 +51,7 @@
         const Timer = (props) => <Icon name="Timer" {...props} />;
         const Trophy = (props) => <Icon name="Trophy" {...props} />;
         const ArrowLeft = (props) => <Icon name="ArrowLeft" {...props} />;
+        const ArrowRight = (props) => <Icon name="ArrowRight" {...props} />;
         const Shuffle = (props) => <Icon name="Shuffle" {...props} />;
         const X = (props) => <Icon name="X" {...props} />;
         const Puzzle = (props) => <Icon name="Puzzle" {...props} />;
@@ -99,6 +100,21 @@
             [6, 6, 7, 7, 7, 7, 8, 8, 8],
             [6, 6, 6, 7, 7, 7, 8, 8, 8]
           ]
+        ];
+
+        // --- ลำดับการแข่งขันจริง (Competition Stages) ---
+        // แก้ไขลำดับให้ตรงตาม PDF หัวข้อ 4.3.2 (ประถมศึกษาตอนปลาย)
+        const COMPETITION_STAGES = [
+          { type: 'classic', diff: 'intermediate', name: 'ด่าน 1: Classic 6x6' },
+          { type: 'alphabet', diff: 'intermediate', name: 'ด่าน 2: Alphabet 6x6' },
+          { type: 'diagonal', diff: 'intermediate', name: 'ด่าน 3: Diagonal 6x6' },
+          { type: 'jigsaw', diff: 'intermediate', name: 'ด่าน 4: Jigsaw 6x6' },
+          { type: 'thai_alphabet', diff: 'intermediate', name: 'ด่าน 5: Thai Alphabet 6x6' },
+          { type: 'classic_9x9', diff: 'beginner', name: 'ด่าน 6: Classic 9x9' },
+          { type: 'alphabet_9x9', diff: 'beginner', name: 'ด่าน 7: Alphabet 9x9' },
+          { type: 'diagonal_9x9', diff: 'beginner', name: 'ด่าน 8: Diagonal 9x9' },
+          { type: 'jigsaw_9x9', diff: 'beginner', name: 'ด่าน 9: Jigsaw 9x9' },
+          { type: 'even_odd_9x9', diff: 'beginner', name: 'ด่าน 10 (ด่านสุดท้าย): Even-Odd 9x9' }
         ];
 
         // --- Dynamic Config Based on Game Type ---
@@ -224,6 +240,11 @@
           const [menuGameType, setMenuGameType] = useState('classic');
           const [gameType, setGameType] = useState('classic'); 
           
+          // --- State สำหรับการแข่งขัน ---
+          const [isCompetition, setIsCompetition] = useState(false);
+          const [compStage, setCompStage] = useState(0);
+          const [timeLeft, setTimeLeft] = useState(3600); // 60 นาที = 3600 วินาที
+          
           const [jigsawLayoutIndex, setJigsawLayoutIndex] = useState(0); 
           
           const [initialBoard, setInitialBoard] = useState(() => Array(6).fill().map(() => Array(6).fill(0)));
@@ -319,7 +340,12 @@
             return { cells, lines };
           }, [board, gameType, currentActiveLayout, config.size, config.boxR, config.boxC, parityMask]);
 
+          const isBoardFull = useMemo(() => {
+              return board.every(row => row.every(cell => cell !== 0));
+          }, [board]);
+
           const startNewGame = useCallback((diff = difficulty, type = menuGameType) => {
+            setIsCompetition(false);
             setTimeout(() => {
                 const newConfig = getGridConfig(type);
                 const layoutList = newConfig.size === 9 ? JIGSAW_LAYOUTS_9X9 : JIGSAW_LAYOUTS;
@@ -346,41 +372,95 @@
             }, 10);
           }, [difficulty, menuGameType]);
 
+          // --- ระบบจัดการโหลดด่านการแข่งขัน ---
+          const loadCompetitionStage = useCallback((stageIdx) => {
+            setTimeout(() => {
+                const stageInfo = COMPETITION_STAGES[stageIdx];
+                const newConfig = getGridConfig(stageInfo.type);
+                const layoutList = newConfig.size === 9 ? JIGSAW_LAYOUTS_9X9 : JIGSAW_LAYOUTS;
+                const newLayoutIdx = stageInfo.type.includes('jigsaw') ? Math.floor(Math.random() * layoutList.length) : 0;
+                const selectedLayout = layoutList[newLayoutIdx];
+                
+                const { puzzle, solution: sol, parityMask: pMask } = generateGame(stageInfo.diff, stageInfo.type, selectedLayout);
+                
+                setJigsawLayoutIndex(newLayoutIdx);
+                setInitialBoard(JSON.parse(JSON.stringify(puzzle)));
+                setBoard(JSON.parse(JSON.stringify(puzzle)));
+                setSolution(JSON.parse(JSON.stringify(sol)));
+                setParityMask(pMask || Array(newConfig.size).fill().map(() => Array(newConfig.size).fill(null)));
+                setNotes(Array(newConfig.size).fill().map(() => Array(newConfig.size).fill([])));
+                setSelectedCell(null);
+                setIsNotesMode(false);
+                setVisualHint(null);
+                
+                setDifficulty(stageInfo.diff);
+                setGameType(stageInfo.type);
+                setCompStage(stageIdx);
+                if (stageIdx === 0) setMistakes(0);
+                
+                setGameState('playing');
+            }, 10);
+          }, []);
+
+          const startCompetition = useCallback(() => {
+              setIsCompetition(true);
+              setCompStage(0);
+              setTimeLeft(3600); // 60 นาที
+              loadCompetitionStage(0);
+          }, [loadCompetitionStage]);
+
+          // --- นาฬิกาจับเวลาหลัก ---
           useEffect(() => {
-            if (gameState === 'playing' && !visualHint) {
+            if ((gameState === 'playing' || gameState === 'stage_clear') && !visualHint) {
               timerRef.current = setInterval(() => {
-                setTimeElapsed((prev) => prev + 1);
+                if (isCompetition) {
+                   setTimeLeft((prev) => {
+                       if (prev <= 1) {
+                           setGameState('competition_lost');
+                           return 0;
+                       }
+                       return prev - 1;
+                   });
+                } else {
+                   setTimeElapsed((prev) => prev + 1);
+                }
               }, 1000);
             } else {
               clearInterval(timerRef.current);
             }
             return () => clearInterval(timerRef.current);
-          }, [gameState, visualHint]);
+          }, [gameState, visualHint, isCompetition]);
 
+          // --- ตรวจสอบเงื่อนไขการชนะ ---
           useEffect(() => {
             if (gameState !== 'playing') return;
             
-            let isComplete = true;
-            for (let r = 0; r < config.size; r++) {
-              for (let c = 0; c < config.size; c++) {
-                if (board[r] && board[r][c] === 0) isComplete = false;
-              }
-            }
-            
-            if (isComplete && conflictData.cells.size === 0) {
+            if (isBoardFull && conflictData.cells.size === 0) {
               let isCorrect = true;
               for(let r = 0; r < config.size; r++) {
                  for(let c = 0; c < config.size; c++) {
                     if(board[r] && board[r][c] !== solution[r][c]) isCorrect = false;
                  }
               }
+
               if (isCorrect) {
-                setGameState('won');
-                setSelectedCell(null);
-                setVisualHint(null);
+                if (isCompetition) {
+                    if (compStage < 9) { // 9 คือด่านที่ 10 (ด่านสุดท้าย)
+                        setGameState('stage_clear');
+                        setTimeout(() => {
+                            loadCompetitionStage(compStage + 1);
+                        }, 1500);
+                    } else {
+                        setGameState('competition_won');
+                    }
+                } else {
+                    setGameState('won');
+                    setSelectedCell(null);
+                    setVisualHint(null);
+                }
               }
             }
-          }, [board, solution, gameState, conflictData.cells.size, config.size]);
+          }, [board, solution, gameState, conflictData.cells.size, config.size, isBoardFull, isCompetition, compStage, loadCompetitionStage]);
 
           const formatTime = (seconds) => {
             const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -471,7 +551,7 @@
           }, [gameState, selectedCell, initialBoard, isNotesMode, board, notes, solution, visualHint, clearRelatedNotes]);
 
           const applySmartHint = useCallback(() => {
-            if (gameState !== 'playing') return;
+            if (gameState !== 'playing' || isCompetition) return;
 
             let foundHint = null;
 
@@ -597,7 +677,7 @@
               setVisualHint(foundHint);
               setSelectedCell(targetCell);
             }
-          }, [gameState, board, solution, notes, gameType, currentActiveLayout, config, parityMask, clearRelatedNotes]);
+          }, [gameState, board, solution, notes, gameType, currentActiveLayout, config, parityMask, clearRelatedNotes, isCompetition]);
 
           const clearHint = () => {
             if (visualHint) setVisualHint(null);
@@ -630,7 +710,7 @@
                 handleInput(0);
               } else if (e.key.toLowerCase() === 'n') {
                 setIsNotesMode(prev => !prev);
-              } else if (e.key.toLowerCase() === 'h') {
+              } else if (e.key.toLowerCase() === 'h' && !isCompetition) {
                 applySmartHint();
               } else if (e.key.startsWith('Arrow') && selectedCell) {
                 e.preventDefault();
@@ -644,7 +724,7 @@
             };
             window.addEventListener('keydown', handleKeyDown);
             return () => window.removeEventListener('keydown', handleKeyDown);
-          }, [gameState, handleInput, isNotesMode, selectedCell, applySmartHint, visualHint, gameType, config.size]);
+          }, [gameState, handleInput, isNotesMode, selectedCell, applySmartHint, visualHint, gameType, config.size, isCompetition]);
 
           const getCellCenter = useCallback((r, c, size) => {
             return {
@@ -690,6 +770,7 @@
           });
 
           const getTitle = () => {
+            if (isCompetition) return COMPETITION_STAGES[compStage].name;
             switch (gameType) {
               case 'alphabet': return 'Alphabet Sudoku 6x6';
               case 'thai_alphabet': return 'Thai Alphabet Sudoku 6x6';
@@ -713,20 +794,24 @@
               <div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4">
                 <div>
                   <h1 className="text-lg sm:text-2xl font-bold text-slate-900 flex items-center gap-2">
-                    <Trophy className="w-5 h-5 sm:w-6 sm:h-6 text-amber-500 shrink-0" />
+                    <Trophy className={`w-5 h-5 sm:w-6 sm:h-6 shrink-0 ${isCompetition ? 'text-indigo-600' : 'text-amber-500'}`} />
                     {getTitle()}
                   </h1>
-                  <p className="text-xs sm:text-sm text-slate-500 mt-1">ฝึกวิธีสแกนตัวเลขและตัวอักษร</p>
+                  <p className="text-xs sm:text-sm text-slate-500 mt-1">
+                    {isCompetition ? 'ไม่มีตัวช่วยชี้จุดผิด กรอกให้เต็มแล้วระบบจะตรวจให้' : 'ฝึกวิธีสแกนตัวเลขและตัวอักษร'}
+                  </p>
                 </div>
-                {gameState === 'playing' && (
+                {(gameState === 'playing' || gameState === 'stage_clear') && (
                   <div className="text-right flex flex-col items-end">
-                    <div className="flex items-center justify-end gap-1 text-blue-600 font-mono text-lg sm:text-xl font-semibold">
+                    <div className={`flex items-center justify-end gap-1 font-mono text-lg sm:text-xl font-semibold ${isCompetition && timeLeft < 300 ? 'text-red-600 animate-pulse' : 'text-blue-600'}`}>
                       <Timer className="w-4 h-4 sm:w-5 sm:h-5" />
-                      {formatTime(timeElapsed)}
+                      {isCompetition ? formatTime(timeLeft) : formatTime(timeElapsed)}
                     </div>
-                    <div className="text-[10px] sm:text-xs font-medium text-slate-400 mt-1 bg-slate-100 px-2 py-0.5 rounded-full">
-                      {difficulty.toUpperCase()}
-                    </div>
+                    {!isCompetition && (
+                      <div className="text-[10px] sm:text-xs font-medium text-slate-400 mt-1 bg-slate-100 px-2 py-0.5 rounded-full">
+                        {difficulty.toUpperCase()}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -734,10 +819,24 @@
               {/* Start Menu */}
               {gameState === 'menu' && (
                 <div className="py-2">
+
+                  {/* โหมดแข่งขันจริง (ใหม่) */}
+                  <div className="mb-6 bg-gradient-to-br from-indigo-50 to-blue-50 p-4 sm:p-6 rounded-2xl border border-blue-100 shadow-sm relative overflow-hidden">
+                     <div className="relative z-10">
+                        <h2 className="text-base sm:text-lg font-black text-indigo-900 mb-2 flex items-center gap-2">
+                           <Trophy className="w-5 h-5 text-amber-500" /> โหมดแข่งขันจริง: ประถมศึกษาตอนปลาย
+                        </h2>
+                        <p className="text-xs sm:text-sm text-indigo-700 mb-4 font-medium">10 รูปแบบต่อเนื่อง • 60 นาที • ไม่มีตัวช่วยบอกจุดผิด • ไม่มีคำใบ้</p>
+                        <button onClick={startCompetition} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
+                           เริ่มการแข่งขัน <ArrowRight className="w-4 h-4" />
+                        </button>
+                     </div>
+                  </div>
+
                   <div className="mb-6">
                     <h2 className="text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
                       <span className="bg-slate-200 text-slate-700 w-5 h-5 rounded-full flex items-center justify-center text-xs">1</span>
-                      เลือกรูปแบบเกม
+                      โหมดฝึกซ้อม: เลือกรูปแบบเกม
                     </h2>
                     
                     <h3 className="text-[11px] font-bold text-slate-400 mb-2 mt-4 px-1 uppercase tracking-wide">กระดานขนาด 6x6</h3>
@@ -793,16 +892,25 @@
               )}
 
               {/* Game Area */}
-              {(gameState === 'playing' || gameState === 'won') && (
+              {(gameState === 'playing' || gameState === 'stage_clear' || gameState === 'won') && (
                 <div className="animate-in fade-in duration-300">
                   <div className="flex justify-between items-center mb-4">
-                    <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); }} className="flex items-center gap-1 text-xs sm:text-sm text-slate-500 hover:text-blue-600 font-medium">
-                      <ArrowLeft className="w-4 h-4" /> กลับเมนู
+                    <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); setIsCompetition(false); }} className="flex items-center gap-1 text-xs sm:text-sm text-slate-500 hover:text-blue-600 font-medium">
+                      <ArrowLeft className="w-4 h-4" /> {isCompetition ? 'ยอมแพ้/กลับเมนู' : 'กลับเมนู'}
                     </button>
-                    <button onClick={() => startNewGame(difficulty, gameType)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs sm:text-sm font-bold rounded-lg border border-blue-200 shadow-sm">
-                      <Shuffle className="w-4 h-4" /> สุ่มโจทย์ใหม่
-                    </button>
+                    {!isCompetition && (
+                      <button onClick={() => startNewGame(difficulty, gameType)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 text-xs sm:text-sm font-bold rounded-lg border border-blue-200 shadow-sm">
+                        <Shuffle className="w-4 h-4" /> สุ่มโจทย์ใหม่
+                      </button>
+                    )}
                   </div>
+
+                  {/* ป้ายเตือนในโหมดแข่งขัน เมื่อใส่เต็มแต่ไม่ถูกต้อง */}
+                  {isCompetition && isBoardFull && conflictData.cells.size > 0 && (
+                     <div className="mb-4 p-2 sm:p-3 bg-red-100 border border-red-300 rounded-xl flex items-center justify-center gap-2 text-red-700 text-xs sm:text-sm font-bold animate-pulse">
+                         <X className="w-4 h-4" /> กระดานเต็มแล้วแต่ยังมีจุดผิดอยู่ ลองตรวจสอบดีๆ นะ!
+                     </div>
+                  )}
 
                   {gameType.includes('even_odd') && (
                     <div className="flex justify-center gap-4 mb-4 text-xs sm:text-sm font-bold text-slate-600 bg-slate-100 py-2 rounded-lg">
@@ -811,17 +919,20 @@
                     </div>
                   )}
 
-                  <div className={`transition-all duration-300 overflow-hidden ${visualHint ? 'max-h-24 opacity-100 mb-4' : 'max-h-0 opacity-0 mb-0'}`}>
-                     <div className="bg-green-50 p-2 sm:p-3 rounded-xl border border-green-300 flex items-center justify-between shadow-sm">
-                        <div className="flex items-center gap-2 text-left">
-                           <Lightbulb className="w-5 h-5 text-green-600 shrink-0" />
-                           <div className="flex flex-col">
-                             <span className="text-[11px] sm:text-sm font-bold text-green-800 leading-tight">ช่องเดียวที่เติม {formatVal(visualHint?.num, gameType)} ได้</span>
-                           </div>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); clearHint(); }} className="ml-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-green-500 hover:bg-green-600 text-white text-[10px] sm:text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap active:scale-95">เล่นต่อ</button>
-                     </div>
-                  </div>
+                  {/* Hint Banner (ถูกปิดในโหมดแข่งขันอัตโนมัติ) */}
+                  {!isCompetition && (
+                    <div className={`transition-all duration-300 overflow-hidden ${visualHint ? 'max-h-24 opacity-100 mb-4' : 'max-h-0 opacity-0 mb-0'}`}>
+                       <div className="bg-green-50 p-2 sm:p-3 rounded-xl border border-green-300 flex items-center justify-between shadow-sm">
+                          <div className="flex items-center gap-2 text-left">
+                             <Lightbulb className="w-5 h-5 text-green-600 shrink-0" />
+                             <div className="flex flex-col">
+                               <span className="text-[11px] sm:text-sm font-bold text-green-800 leading-tight">ช่องเดียวที่เติม {formatVal(visualHint?.num, gameType)} ได้</span>
+                             </div>
+                          </div>
+                          <button onClick={(e) => { e.stopPropagation(); clearHint(); }} className="ml-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-green-500 hover:bg-green-600 text-white text-[10px] sm:text-xs font-bold rounded-lg shadow-sm transition-colors whitespace-nowrap active:scale-95">เล่นต่อ</button>
+                       </div>
+                    </div>
+                  )}
 
                   <div className="flex justify-center mb-6">
                     <div className="relative w-fit mx-auto">
@@ -829,10 +940,10 @@
                         <defs>
                           <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><polygon points="0 0, 6 3, 0 6" fill="#334155" /></marker>
                         </defs>
-                        {visualHint && arrowPaths.map((path, idx) => (
+                        {visualHint && !isCompetition && arrowPaths.map((path, idx) => (
                           <line key={`hint-${idx}`} x1={path.x1} y1={path.y1} x2={path.x2} y2={path.y2} stroke="#334155" strokeWidth="2.5" markerEnd="url(#arrowhead)" className="opacity-80 drop-shadow-md" />
                         ))}
-                        {!visualHint && errorLines.map(line => (
+                        {!visualHint && !isCompetition && errorLines.map(line => (
                            <line key={`err-${line.id}`} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke="#dc2626" strokeWidth="3.5" strokeLinecap="round" className="opacity-90 drop-shadow-sm" />
                         ))}
                       </svg>
@@ -856,8 +967,9 @@
                             const borderRight = isRightBorderThick ? 'border-r-[3px] border-r-slate-800' : (c !== config.size - 1 ? 'border-r border-r-slate-300' : '');
                             const borderBottom = isBottomBorderThick ? 'border-b-[3px] border-b-slate-800' : (r !== config.size - 1 ? 'border-b border-b-slate-300' : '');
 
-                            const isError = conflictData.cells.has(`${r}-${c}`);
-                            const isHighlightedNum = !visualHint && !isSelected && !isError && cell !== 0 && selectedCell && board[selectedCell[0]] && board[selectedCell[0]][selectedCell[1]] === cell;
+                            // ปิดการโชว์ Error ทันทีในโหมดแข่งขัน
+                            const isError = !isCompetition && conflictData.cells.has(`${r}-${c}`);
+                            const isHighlightedNum = !visualHint && !isCompetition && !isSelected && !isError && cell !== 0 && selectedCell && board[selectedCell[0]] && board[selectedCell[0]][selectedCell[1]] === cell;
                             const isDiagonalCell = gameType.includes('diagonal') && (r === c || r + c === config.size - 1);
                             const isEvenCell = gameType.includes('even_odd') && parityMask[r] && parityMask[r][c] === 'even';
 
@@ -868,7 +980,7 @@
                             let numStyle = isInitial ? 'text-slate-900 font-bold' : 'text-blue-600';
                             let zIndexClass = 'z-0';
 
-                            if (visualHint) {
+                            if (visualHint && !isCompetition) {
                               const isTarget = visualHint.targetCell[0] === r && visualHint.targetCell[1] === c;
                               const inBox = visualHint.regionCells.some(([rr, cc]) => rr === r && cc === c);
                               const isEliminated = visualHint.eliminations.some(elim => elim.target[0] === r && elim.target[1] === c);
@@ -932,9 +1044,12 @@
                         <button onClick={() => handleInput(0)} className="flex-1 flex flex-col items-center justify-center py-2 sm:py-2.5 bg-white border-2 border-slate-200 text-slate-600 rounded-xl shadow-sm hover:bg-slate-50">
                           <Eraser className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" /> <span className="text-[10px] sm:text-[11px] font-bold">ลบ</span>
                         </button>
-                        <button onClick={applySmartHint} className="flex-1 flex flex-col items-center justify-center py-2 sm:py-2.5 bg-green-50 border-2 border-green-200 text-green-700 rounded-xl shadow-sm hover:bg-green-100">
-                          <Lightbulb className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" /> <span className="text-[10px] sm:text-[11px] font-bold text-center leading-tight">ใบ้พร้อม<br/>สอนคิด</span>
-                        </button>
+                        {/* ปิดปุ่มตัวช่วยในโหมดการแข่งขัน */}
+                        {!isCompetition && (
+                          <button onClick={applySmartHint} className="flex-1 flex flex-col items-center justify-center py-2 sm:py-2.5 bg-green-50 border-2 border-green-200 text-green-700 rounded-xl shadow-sm hover:bg-green-100">
+                            <Lightbulb className="w-4 h-4 sm:w-5 sm:h-5 mb-0.5" /> <span className="text-[10px] sm:text-[11px] font-bold text-center leading-tight">ใบ้พร้อม<br/>สอนคิด</span>
+                          </button>
+                        )}
                       </div>
 
                       <div className={`grid gap-1.5 sm:gap-2 ${config.size === 9 ? 'grid-cols-5 sm:grid-cols-9' : 'grid-cols-6'}`}>
@@ -949,8 +1064,17 @@
                 </div>
               )}
 
-              {/* Win Screen */}
-              {gameState === 'won' && (
+              {/* Overlay: ผ่านด่านย่อยการแข่งขัน */}
+              {gameState === 'stage_clear' && isCompetition && (
+                <div className="absolute inset-0 bg-green-500/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 rounded-2xl animate-in fade-in zoom-in text-white">
+                   <CheckCircle2 className="w-20 h-20 mb-4 animate-bounce" />
+                   <h2 className="text-3xl font-black mb-2 text-center">ผ่านด่าน {compStage + 1}/10!</h2>
+                   <p className="font-medium text-green-100">กำลังเตรียมด่านต่อไป...</p>
+                </div>
+              )}
+
+              {/* Win Screen (ปกติ) */}
+              {gameState === 'won' && !isCompetition && (
                 <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 rounded-2xl animate-in fade-in zoom-in">
                    <Trophy className="w-16 h-16 sm:w-20 sm:h-20 text-yellow-500 mb-4 drop-shadow-lg" />
                    <h2 className="text-2xl sm:text-3xl font-black text-slate-800 mb-2">ยอดเยี่ยม!</h2>
@@ -967,11 +1091,56 @@
                       </div>
                    </div>
 
-                   <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); }} className="w-full max-w-xs py-3 sm:py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-base sm:text-lg font-bold transition-all shadow-md active:scale-95">
+                   <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); setIsCompetition(false); }} className="w-full max-w-xs py-3 sm:py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-base sm:text-lg font-bold transition-all shadow-md active:scale-95">
                       กลับไปเลือกรูปแบบเกม
                    </button>
                 </div>
               )}
+
+              {/* Win Screen (จบการแข่งขัน) */}
+              {gameState === 'competition_won' && (
+                <div className="absolute inset-0 bg-indigo-600 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 rounded-2xl animate-in fade-in zoom-in text-white text-center">
+                   <Trophy className="w-20 h-20 sm:w-24 sm:h-24 text-yellow-400 mb-6 drop-shadow-[0_0_15px_rgba(250,204,21,0.5)]" />
+                   <h2 className="text-2xl sm:text-4xl font-black mb-2">สุดยอดมาก!</h2>
+                   <p className="text-sm sm:text-base text-indigo-200 font-medium mb-8">คุณเคลียร์บททดสอบประถมศึกษาตอนปลายได้ครบทั้ง 10 รูปแบบ</p>
+                   
+                   <div className="bg-indigo-700/50 border border-indigo-400 p-4 rounded-xl w-full max-w-xs mb-8">
+                      <div className="flex justify-between items-center py-2 border-b border-indigo-500/50">
+                         <span className="text-sm sm:text-base font-bold text-indigo-100">เวลาที่ใช้รวม</span>
+                         <span className="text-white font-black text-xl">{formatTime(3600 - timeLeft)}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-2">
+                         <span className="text-sm sm:text-base font-bold text-indigo-100">พิมพ์ผิดรวม</span>
+                         <span className="text-red-300 font-black text-xl">{mistakes} <span className="text-sm text-indigo-300">ครั้ง</span></span>
+                      </div>
+                   </div>
+
+                   <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); setIsCompetition(false); }} className="w-full max-w-xs py-3 sm:py-4 bg-white text-indigo-800 rounded-xl text-base sm:text-lg font-bold transition-all shadow-xl active:scale-95">
+                      กลับสู่เมนูหลัก
+                   </button>
+                </div>
+              )}
+
+              {/* Lost Screen (หมดเวลาการแข่งขัน) */}
+              {gameState === 'competition_lost' && (
+                <div className="absolute inset-0 bg-slate-900/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-6 rounded-2xl animate-in fade-in zoom-in text-white text-center">
+                   <Timer className="w-20 h-20 sm:w-24 sm:h-24 text-red-500 mb-4 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]" />
+                   <h2 className="text-3xl sm:text-5xl font-black mb-2 text-red-500">หมดเวลา!</h2>
+                   <p className="text-sm sm:text-base text-slate-300 font-medium mb-6">น่าเสียดาย เวลา 60 นาทีหมดลงแล้ว</p>
+                   
+                   <div className="bg-slate-800 border border-slate-700 p-4 rounded-xl w-full max-w-xs mb-8">
+                      <div className="flex flex-col items-center justify-center py-2">
+                         <span className="text-sm sm:text-base font-bold text-slate-400">คุณทำได้ถึง</span>
+                         <span className="text-white font-black text-2xl mt-1">ด่านที่ {compStage + 1} / 10</span>
+                      </div>
+                   </div>
+
+                   <button onClick={() => { setMenuGameType(gameType); setGameState('menu'); setIsCompetition(false); }} className="w-full max-w-xs py-3 sm:py-4 bg-red-600 hover:bg-red-700 text-white rounded-xl text-base sm:text-lg font-bold transition-all shadow-xl active:scale-95">
+                      กลับสู่เมนูหลัก
+                   </button>
+                </div>
+              )}
+
             </div>
           );
         }
